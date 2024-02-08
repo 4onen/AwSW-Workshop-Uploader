@@ -35,7 +35,7 @@ impl FileField {
 
     pub fn select_file(&mut self) {
         let result = FileDialog::new()
-            .add_filter("JPG Files", &["*.jpg", "*.jpeg"])
+            .add_filter("JPG Files", &["jpg", "jpeg"])
             .show_open_single_file();
 
         if let Ok(pathbuf) = result {

@@ -1,7 +1,7 @@
 use super::err_dialog_types::error_dialog;
 use iced::widget::{button, column, row, text, text_input};
 use iced::Element;
-use native_dialog::FileDialog;
+use native_dialog::FileDialogBuilder;
 use std::path::PathBuf;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -34,9 +34,10 @@ impl FileField {
     }
 
     pub fn select_file(&mut self) {
-        let result = FileDialog::new()
+        let result = FileDialogBuilder::default()
             .add_filter("JPG Files", &["jpg", "jpeg"])
-            .show_open_single_file();
+            .open_single_file()
+            .show();
 
         if let Ok(pathbuf) = result {
             if let Some(pathbuf) = pathbuf {
@@ -50,7 +51,7 @@ impl FileField {
     }
 
     pub fn select_dir(&mut self) {
-        let result = FileDialog::new().show_open_single_dir();
+        let result = FileDialogBuilder::default().open_single_dir().show();
 
         if let Ok(pathbuf) = result {
             if let Some(pathbuf) = pathbuf {

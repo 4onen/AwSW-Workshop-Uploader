@@ -1,17 +1,19 @@
 pub fn error_dialog(msg: &str) {
-    let _ = native_dialog::MessageDialog::new()
-        .set_type(native_dialog::MessageType::Error)
+    let _ = native_dialog::MessageDialogBuilder::default()
+        .set_level(native_dialog::MessageLevel::Error)
         .set_title("Error")
         .set_text(msg)
-        .show_alert();
+        .alert()
+        .show();
 }
 
 pub fn confirm_dialog(msg: &str) -> bool {
-    let ans = native_dialog::MessageDialog::new()
-        .set_type(native_dialog::MessageType::Warning)
+    let ans = native_dialog::MessageDialogBuilder::default()
+        .set_level(native_dialog::MessageLevel::Warning)
         .set_title("Warning")
         .set_text(msg)
-        .show_confirm();
+        .confirm()
+        .show();
 
     match ans {
         Ok(b) => b,

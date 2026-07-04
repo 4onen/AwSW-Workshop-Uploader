@@ -4,7 +4,9 @@ use std::ops::Deref;
 use std::sync::{atomic::AtomicUsize, atomic::Ordering, Arc};
 use std::thread::Thread;
 use std::time::Duration;
-use steamworks::{Client, PublishedFileId, QueryResult, QueryResults, SingleClient, SteamError};
+use steamworks::{
+    Client, PublishedFileId, QueryResult, QueryResults, SteamAPIInitError, SteamError,
+};
 
 #[derive(Debug, Clone)]
 pub struct SingleClientExecutor {
@@ -23,7 +25,7 @@ impl SingleClientExecutor {
     }
 }
 
-fn start_executor(single_client: SingleClient) -> SingleClientExecutor {
+fn start_executor(single_client: Client) -> SingleClientExecutor {
     let watchers: Arc<AtomicUsize> = Arc::default();
     let thread_copy = watchers.clone();
 
@@ -37,7 +39,7 @@ fn start_executor(single_client: SingleClient) -> SingleClientExecutor {
     SingleClientExecutor { watchers, handle }
 }
 
-fn steamworks_worker(single_client: SingleClient, mut watchers: Arc<AtomicUsize>) {
+fn steamworks_worker(single_client: Client, mut watchers: Arc<AtomicUsize>) {
     loop {
         while watchers.load(Ordering::Acquire) > 0 {
             single_client.run_callbacks();
@@ -107,9 +109,9 @@ pub struct WorkshopClient {
 }
 
 impl WorkshopClient {
-    pub fn init_app(id: steamworks::AppId) -> steamworks::SResult<Self> {
-        Client::init_app(id).map(|(client, single_client)| WorkshopClient {
-            callback_executor: start_executor(single_client),
+    pub fn init_app(id: steamworks::AppId) -> Result<Self, SteamAPIInitError> {
+        Client::init_app(id).map(|client| WorkshopClient {
+            callback_executor: start_executor(client.clone()),
             steam_client: client,
         })
     }
@@ -173,6 +175,21 @@ impl WorkshopClient {
             //         }else{
             //             Ok(res)
             //         }
+            // })
+            // .and_then(|res| {
+            //     if res.num_children > 0 {
+            //         if confirm_dialog(format!("This item has {} dependencies.\nContinue?",res.num_children).as_str()){
+            //             Ok(res)
+            //         }else{
+            //             Err(SteamError::Cancelled)
+            //         }
+            //     } else {
+            //         if confirm_dialog(format!("This item has no dependencies.\nContinue?").as_str()){
+            //             Ok(res)
+            //         }else{
+            //             Err(SteamError::Cancelled)
+            //         }
+            //     }
             // })
             .map(Into::<ItemInfo>::into)
     }

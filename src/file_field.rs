@@ -18,7 +18,7 @@ impl FileField {
 
     pub fn view<'a, Message: Clone + 'a>(
         &self,
-        label: &str,
+        label: &'a str,
         placeholder: &str,
         edit_msg: fn(String) -> Message,
         browse_msg: Message,
@@ -26,7 +26,7 @@ impl FileField {
         column![
             text(label),
             row![
-                text_input(placeholder, &self.path.to_string_lossy(), edit_msg),
+                text_input(placeholder, &self.path.to_string_lossy()).on_input(edit_msg),
                 button("Browse",).on_press(browse_msg),
             ],
         ]

@@ -53,14 +53,17 @@ impl ItemInfoState {
         }
     }
 
-    pub fn view(&self, file_id: Option<PublishedFileId>) -> Element<ItemInfoMessage> {
+    pub fn view<'s, 'r>(
+        &'s self,
+        file_id: Option<PublishedFileId>,
+    ) -> Element<'r, ItemInfoMessage> {
         column![
             if let Some(file_id) = file_id {
                 text(format!("Updating item with ID: {}", file_id.0))
             } else {
                 text("Creating new item:")
             },
-            text_input("Name", &self.name, ItemInfoMessage::EditName,),
+            text_input("Name", &self.name).on_input(ItemInfoMessage::EditName),
             self.preview_image.view(
                 "Preview Image",
                 if file_id.is_some() { "Optional" } else { "" },
@@ -73,11 +76,8 @@ impl ItemInfoState {
                 ItemInfoMessage::EditTargetFolder,
                 ItemInfoMessage::BrowseTargetFolder,
             ),
-            text_input(
-                "Changenotes",
-                &self.change_notes,
-                ItemInfoMessage::EditChangeNotes
-            )
+            text_input("Changenotes", &self.change_notes,)
+                .on_input(ItemInfoMessage::EditChangeNotes)
         ]
         .into()
     }

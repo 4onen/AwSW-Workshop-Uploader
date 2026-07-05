@@ -4,7 +4,7 @@ mod item_info;
 mod my_steamworks;
 use err_dialog_types::ErrorDialogUnwrapper;
 use iced::widget::{button, column, row, text, text_input};
-use iced::{Application, Command, Element, Settings};
+use iced::{Element, Settings, Task};
 use item_info::{ItemInfo, ItemInfoMessage, ItemInfoState};
 use my_steamworks::WorkshopClient;
 use std::num::IntErrorKind;
@@ -71,7 +71,8 @@ fn initial_view<'a>(existing_id: &str) -> Element<'a, Message> {
         } else {
             button("Update existing").on_press(Message::Proceed)
         },
-        text_input("Existing item ID", existing_id, Message::SetExistingId)
+        text_input("Existing item ID", existing_id)
+            .on_input(Message::SetExistingId)
             .on_submit(Message::Proceed),
     ];
 
@@ -84,10 +85,10 @@ fn initial_view<'a>(existing_id: &str) -> Element<'a, Message> {
     res.into()
 }
 
-fn edit_item_view<'a>(
-    item_info: &'a ItemInfoState,
+fn edit_item_view<'s, 'r>(
+    item_info: &'s ItemInfoState,
     existing_id: Option<PublishedFileId>,
-) -> Element<'a, Message> {
+) -> Element<'r, Message> {
     let ready_info = ItemInfo::try_from(item_info.clone());
 
     let mut fwd_button = if existing_id.is_some() {
@@ -118,169 +119,150 @@ fn edit_item_view<'a>(
 }
 
 impl Model {
-    fn update_to_create_item(&mut self, item_info: ItemInfo) -> Command<Message> {
+    fn update_to_create_item(&mut self, item_info: ItemInfo) -> Task<Message> {
         self.state = ModelState::CreatingItem(item_info);
-        Command::perform(self.client.clone().create_item(), Message::receive_item_id)
+        Task::perform(self.client.clone().create_item(), Message::receive_item_id)
     }
 
     fn update_to_send_item(
         &mut self,
         item_id: PublishedFileId,
         item_info: ItemInfo,
-    ) -> Command<Message> {
+    ) -> Task<Message> {
         self.state = ModelState::SendingItem(item_id, item_info.clone());
-        Command::perform(
+        Task::perform(
             self.client.clone().send_item(item_id, item_info),
             Message::receive_item_id,
         )
     }
 }
 
-impl Application for Model {
-    type Message = Message;
-    type Executor = iced::executor::Default;
-    type Flags = WorkshopClient;
-    type Theme = iced::Theme;
-
-    fn new(client: Self::Flags) -> (Self, Command<Self::Message>) {
-        let state = ModelState::Initial(String::new());
-
-        (Model { client, state }, Command::none())
+fn update(model: &mut Model, message: Message) -> Task<Message> {
+    if std::mem::discriminant(&message) == std::mem::discriminant(&Message::TermsLinkPressed) {
+        model.client.open_terms();
+        return Task::none();
     }
 
-    fn title(&self) -> String {
-        String::from("4onen's Workshop Uploader")
-    }
-
-    fn update(&mut self, message: Self::Message) -> Command<Message> {
-        const CMDN: Command<Message> = Command::none();
-
-        if std::mem::discriminant(&message) == std::mem::discriminant(&Message::TermsLinkPressed) {
-            self.client.open_terms();
-            return CMDN;
-        }
-
-        match self.state.clone() {
-            ModelState::Initial(idstr) => match message {
-                Message::SetExistingId(idstr) => {
-                    self.state = ModelState::Initial(idstr);
-                    CMDN
-                }
-                Message::Proceed => match idstr.parse::<u64>().map(PublishedFileId) {
-                    Ok(item_id) => {
-                        self.state = ModelState::ExistingIdSearching(item_id, None);
-                        Command::perform(
-                            self.client.clone().get_item_info(item_id),
-                            Message::receive_item_info,
-                        )
-                    }
-                    _ => {
-                        self.state = ModelState::ItemForm(None, ItemInfoState::default());
-                        CMDN
-                    }
-                },
-                _ => CMDN,
-            },
-            ModelState::ExistingIdSearching(item_id, _) => {
-                match message {
-                    Message::GoBack => self.state = ModelState::Initial(item_id.0.to_string()),
-                    Message::ReceiveFoundItemInfo(item_info) => {
-                        self.state = ModelState::ItemForm(Some(item_id), item_info.into())
-                    }
-                    Message::ReceiveSteamError(err) => {
-                        self.state = ModelState::ExistingIdSearching(item_id, Some(err))
-                    }
-                    _ => (),
-                };
-                CMDN
+    match model.state.clone() {
+        ModelState::Initial(idstr) => match message {
+            Message::SetExistingId(idstr) => {
+                model.state = ModelState::Initial(idstr);
+                Task::none()
             }
-            ModelState::ItemForm(maybe_id, mut item_info) => match message {
-                Message::EditItemData(item_info_message) => {
-                    item_info.update(item_info_message);
-                    self.state = ModelState::ItemForm(maybe_id, item_info);
-                    CMDN
+            Message::Proceed => match idstr.parse::<u64>().map(PublishedFileId) {
+                Ok(item_id) => {
+                    model.state = ModelState::ExistingIdSearching(item_id, None);
+                    Task::perform(
+                        model.client.clone().get_item_info(item_id),
+                        Message::receive_item_info,
+                    )
                 }
-                Message::Proceed => match ItemInfo::try_from(item_info.clone()) {
-                    Ok(item_info) => match maybe_id {
-                        Some(item_id) => self.update_to_send_item(item_id, item_info),
-                        None => self.update_to_create_item(item_info),
-                    },
-                    Err(error) => {
-                        println!("Error: {}", error);
-                        CMDN
-                    }
-                },
-                Message::GoBack => {
-                    self.state = ModelState::Initial(
-                        maybe_id
-                            .map(|id| id.0.to_string())
-                            .unwrap_or(String::default()),
-                    );
-                    CMDN
+                _ => {
+                    model.state = ModelState::ItemForm(None, ItemInfoState::default());
+                    Task::none()
                 }
-                _ => CMDN,
             },
-            ModelState::CreatingItem(item_info) => match message {
-                Message::ReceiveItemId(item_id) => self.update_to_send_item(item_id, item_info),
+            _ => Task::none(),
+        },
+        ModelState::ExistingIdSearching(item_id, _) => {
+            match message {
+                Message::GoBack => model.state = ModelState::Initial(item_id.0.to_string()),
+                Message::ReceiveFoundItemInfo(item_info) => {
+                    model.state = ModelState::ItemForm(Some(item_id), item_info.into())
+                }
                 Message::ReceiveSteamError(err) => {
-                    self.state = ModelState::CreationError(item_info, err);
-                    CMDN
+                    model.state = ModelState::ExistingIdSearching(item_id, Some(err))
                 }
-                _ => CMDN,
+                _ => (),
+            };
+            Task::none()
+        }
+        ModelState::ItemForm(maybe_id, mut item_info) => match message {
+            Message::EditItemData(item_info_message) => {
+                item_info.update(item_info_message);
+                model.state = ModelState::ItemForm(maybe_id, item_info);
+                Task::none()
+            }
+            Message::Proceed => match ItemInfo::try_from(item_info.clone()) {
+                Ok(item_info) => match maybe_id {
+                    Some(item_id) => model.update_to_send_item(item_id, item_info),
+                    None => model.update_to_create_item(item_info),
+                },
+                Err(error) => {
+                    println!("Error: {}", error);
+                    Task::none()
+                }
             },
-            ModelState::CreationError(item_info, _err) => {
-                match message {
-                    Message::GoBack => self.state = ModelState::ItemForm(None, item_info.into()),
-                    _ => (),
-                };
-                CMDN
+            Message::GoBack => {
+                model.state = ModelState::Initial(
+                    maybe_id
+                        .map(|id| id.0.to_string())
+                        .unwrap_or(String::default()),
+                );
+                Task::none()
             }
-            ModelState::SendingItem(item_id, item_info) => {
-                match message {
-                    Message::ReceiveItemId(incoming_id) => {
-                        if incoming_id != item_id {
-                            println!(
-                                "Not advancing due to non-matching ids. Expected {}, got {}.",
-                                item_id.0, incoming_id.0,
-                            );
-                        } else {
-                            self.state = ModelState::Done(item_id);
-                        };
-                    }
-                    Message::ReceiveSteamError(err) => {
-                        self.state = ModelState::SendingError(item_id, item_info, err);
-                    }
-                    _ => (),
-                };
-                CMDN
+            _ => Task::none(),
+        },
+        ModelState::CreatingItem(item_info) => match message {
+            Message::ReceiveItemId(item_id) => model.update_to_send_item(item_id, item_info),
+            Message::ReceiveSteamError(err) => {
+                model.state = ModelState::CreationError(item_info, err);
+                Task::none()
             }
-            ModelState::SendingError(item_id, item_info, _err) => {
-                match message {
-                    Message::GoBack => {
-                        self.state = ModelState::ItemForm(item_id.into(), item_info.into())
-                    }
-                    _ => (),
-                };
-                CMDN
-            }
-            ModelState::Done(item_id) => {
-                match message {
-                    Message::Proceed => {
-                        let item_url = format!("steam://url/CommunityFilePage/{}", item_id.0);
-                        self.client.open_url(item_url.as_str());
-                    }
-                    Message::GoBack => {
-                        self.state = ModelState::Initial(String::default());
-                    }
-                    _ => (),
-                };
-                CMDN
-            }
+            _ => Task::none(),
+        },
+        ModelState::CreationError(item_info, _err) => {
+            match message {
+                Message::GoBack => model.state = ModelState::ItemForm(None, item_info.into()),
+                _ => (),
+            };
+            Task::none()
+        }
+        ModelState::SendingItem(item_id, item_info) => {
+            match message {
+                Message::ReceiveItemId(incoming_id) => {
+                    if incoming_id != item_id {
+                        println!(
+                            "Not advancing due to non-matching ids. Expected {}, got {}.",
+                            item_id.0, incoming_id.0,
+                        );
+                    } else {
+                        model.state = ModelState::Done(item_id);
+                    };
+                }
+                Message::ReceiveSteamError(err) => {
+                    model.state = ModelState::SendingError(item_id, item_info, err);
+                }
+                _ => (),
+            };
+            Task::none()
+        }
+        ModelState::SendingError(item_id, item_info, _err) => {
+            match message {
+                Message::GoBack => {
+                    model.state = ModelState::ItemForm(item_id.into(), item_info.into())
+                }
+                _ => (),
+            };
+            Task::none()
+        }
+        ModelState::Done(item_id) => {
+            match message {
+                Message::Proceed => {
+                    let item_url = format!("steam://url/CommunityFilePage/{}", item_id.0);
+                    model.client.open_url(item_url.as_str());
+                }
+                Message::GoBack => {
+                    model.state = ModelState::Initial(String::default());
+                }
+                _ => (),
+            };
+            Task::none()
         }
     }
-
-    fn view(&self) -> Element<Self::Message> {
-        match &self.state {
+}
+fn view<'r>(model: &'r Model) -> Element<'r, Message> {
+    match &model.state {
             ModelState::Initial(existing_id) => initial_view(existing_id.as_str()),
             ModelState::ExistingIdSearching(item_id, None) => column![
                 text(format!("Searching for item with ID {}...", item_id.0)),
@@ -297,7 +279,7 @@ impl Application for Model {
             .into(),
             ModelState::ItemForm(item_id, item_state) => edit_item_view(item_state, *item_id),
             ModelState::CreatingItem(item_info) => {
-                text(format!("Creating \"{}\" on Steam Workshop...", item_info.name).as_str()).into()
+                text(format!("Creating \"{}\" on Steam Workshop...", item_info.name)).into()
             }
             ModelState::CreationError(item_info, err) => column![text(format!(
                 "Error creating a new entry on the workshop:\n{:?}\n\"{}\" was not uploaded.",
@@ -307,12 +289,12 @@ impl Application for Model {
             ]
             .into(),
             ModelState::SendingItem(item_id, _item_info) => {
-                text(format!("Sending item {} to Steam Workshop...", item_id.0).as_str()).into()
+                text(format!("Sending item {} to Steam Workshop...", item_id.0)).into()
             }
             ModelState::SendingError(item_id, item_info, err) => column![text(format!(
                 "Error uploading your item to the workshop:\n{:?}\n\"{}\" is created on the workshop with ID {}, but does not have your files in it.\nPlease resolve the issue and try uploading to this existing ID again.",
                 err, item_info.name, item_id.0
-            ).as_str()),
+            )),
             button("Go Back").on_press(Message::GoBack),
             ].into(),
             ModelState::Done(id) => column![
@@ -322,37 +304,53 @@ impl Application for Model {
             ]
             .into(),
         }
-    }
 }
 
 fn main() -> iced::Result {
-    let client = APP_ID_STR
-        .parse()
-        .map(AppId)
-        .map(WorkshopClient::init_app)
-        .expect_or_dialog("Failed to parse App ID. This build of the workshop uploader is corrupt.")
-        .expect_or_dialog("Failed to initialize Steam Workshop client.");
+    let boot = move || {
+        let client = APP_ID_STR
+            .parse()
+            .map(AppId)
+            .map(WorkshopClient::init_app)
+            .expect_or_dialog(
+                "Failed to parse App ID. This build of the workshop uploader is corrupt.",
+            )
+            .expect_or_dialog("Failed to initialize Steam Workshop client.");
+        let state = ModelState::Initial(String::new());
+        (Model { client, state }, Task::none())
+    };
 
-    Model::run(Settings {
-        id: None,
-        window: iced::window::Settings {
-            size: (300, 400),
+    iced::application(boot, update, view)
+        .title("4onen's Workshop Uploader")
+        .settings(Settings {
+            id: None,
+            fonts: vec![],
+            default_font: Default::default(),
+            default_text_size: iced::Pixels(20.),
+            antialiasing: false,
+            vsync: true,
+        })
+        .window(iced::window::Settings {
+            size: iced::Size {
+                width: 300.,
+                height: 400.,
+            },
+            maximized: false,
+            fullscreen: false,
             position: iced::window::Position::Centered,
             min_size: None,
             max_size: None,
             visible: true,
             resizable: true,
+            closeable: true,
+            minimizable: true,
             decorations: true,
             transparent: false,
-            always_on_top: false,
+            blur: false,
+            level: iced::window::Level::Normal,
             icon: None,
-        },
-        flags: client,
-        default_font: None,
-        default_text_size: 20,
-        text_multithreading: false,
-        antialiasing: false,
-        exit_on_close_request: true,
-        try_opengles_first: false,
-    })
+            platform_specific: Default::default(),
+            exit_on_close_request: true,
+        })
+        .run()
 }
